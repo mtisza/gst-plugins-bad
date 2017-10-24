@@ -1037,7 +1037,7 @@ gst_vtenc_update_latency (GstVTEnc * self)
   CFNumberRef value;
   int frames = 0;
   GstClockTime frame_duration;
-  GstClockTime latency;
+  GstClockTime latency, min_latency, max_latency;
 
   if (self->video_info.fps_d == 0) {
     GST_INFO_OBJECT (self, "framerate not known, can't set latency");
@@ -1068,7 +1068,13 @@ gst_vtenc_update_latency (GstVTEnc * self)
         "latency status %d frames %d fps %d/%d time %" GST_TIME_FORMAT, status,
         frames, self->video_info.fps_n, self->video_info.fps_d,
         GST_TIME_ARGS (latency));
-    gst_video_encoder_set_latency (GST_VIDEO_ENCODER (self), latency, latency);
+    /* check if actual latency is outside of configured latency range */
+    gst_video_encoder_get_latency (GST_VIDEO_ENCODER (self), &min_latency,
+        &max_latency);
+    if (latency > max_latency) {
+      gst_video_encoder_set_latency (GST_VIDEO_ENCODER (self), min_latency,
+          latency);
+    }
   }
   CFRelease (value);
 }
