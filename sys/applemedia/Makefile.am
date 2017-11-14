@@ -56,7 +56,7 @@ libgstapplemedia_la_LIBADD =						\
 libgstapplemedia_la_LIBTOOLFLAGS = $(GST_PLUGIN_LIBTOOLFLAGS) --tag=CC
 
 libgstapplemedia_la_LDFLAGS =			\
-	$(GST_PLUGIN_LDFLAGS)			\
+	-module -avoid-version -export-symbols-regex '(^_*gst_plugin_desc.*|_*gst_vtenc_create_hw_session_early.*)' -no-undefined \
 	$(GST_BASE_LDFLAGS)			\
 	$(GST_PLUGINS_BASE_LDFLAGS)		\
 	-Wl,-framework -Wl,CoreFoundation	\

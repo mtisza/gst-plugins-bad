@@ -105,6 +105,7 @@ static GstFlowReturn gst_vtenc_finish (GstVideoEncoder * enc);
 static void gst_vtenc_clear_cached_caps_downstream (GstVTEnc * self);
 
 static VTCompressionSessionRef gst_vtenc_create_session (GstVTEnc * self);
+static void gst_vtenc_initialize_session (GstVTEnc * self, VTCompressionSessionRef session);
 static void gst_vtenc_destroy_session (GstVTEnc * self,
     VTCompressionSessionRef * session);
 static void gst_vtenc_session_dump_properties (GstVTEnc * self,
@@ -641,13 +642,21 @@ gst_vtenc_set_format (GstVideoEncoder * enc, GstVideoCodecState * state)
   self->negotiated_fps_d = state->info.fps_d;
   self->video_info = state->info;
 
-  GST_OBJECT_LOCK (self);
-  gst_vtenc_destroy_session (self, &self->session);
-  GST_OBJECT_UNLOCK (self);
-
   gst_vtenc_negotiate_profile_and_level (enc);
 
-  session = gst_vtenc_create_session (self);
+  GST_OBJECT_LOCK (self);
+  session = self->session;
+  GST_OBJECT_UNLOCK (self);
+
+  /* create a new session if we didn't already create one */
+  if (!session)
+  {
+	  session = gst_vtenc_create_session (self);
+  }
+
+  /* initialize the session regardless of whether it was just created or not */
+  gst_vtenc_initialize_session (self, session);
+
   GST_OBJECT_LOCK (self);
   self->session = session;
   GST_OBJECT_UNLOCK (self);
@@ -822,9 +831,19 @@ gst_vtenc_create_session (GstVTEnc * self)
   if (status != noErr) {
     GST_ERROR_OBJECT (self, "VTCompressionSessionCreate() returned: %d",
         (int) status);
-    goto beach;
   }
 
+  if (encoder_spec)
+    CFRelease (encoder_spec);
+  CFRelease (pb_attrs);
+
+  return session;
+}
+
+static void gst_vtenc_initialize_session (GstVTEnc * self, VTCompressionSessionRef session)
+{
+  OSStatus status;
+  g_return_if_fail(session);
   gst_vtenc_session_configure_expected_framerate (self, session,
       (gdouble) self->negotiated_fps_n / (gdouble) self->negotiated_fps_d);
 
@@ -865,13 +884,58 @@ gst_vtenc_create_session (GstVTEnc * self)
     }
   }
 #endif
+}
 
-beach:
+gboolean
+gst_vtenc_create_hw_session_early(GstVTEnc * self, guint width, guint height)
+{
+  VTCompressionSessionRef session;
+  CFMutableDictionaryRef encoder_spec = NULL, pb_attrs;
+  OSStatus status;
+
+  GST_OBJECT_LOCK (self);
+  session = self->session;
+  GST_OBJECT_UNLOCK (self);
+  g_assert(!session);
+
+#if !HAVE_IOS
+  encoder_spec =
+      CFDictionaryCreateMutable (NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  gst_vtutil_dict_set_boolean (encoder_spec,
+      kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder, true);
+  gst_vtutil_dict_set_boolean (encoder_spec,
+      kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+      TRUE);
+#endif
+
+  pb_attrs = CFDictionaryCreateMutable (NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  gst_vtutil_dict_set_i32 (pb_attrs, kCVPixelBufferWidthKey,
+      width);
+  gst_vtutil_dict_set_i32 (pb_attrs, kCVPixelBufferHeightKey,
+      height);
+
+  status = VTCompressionSessionCreate (NULL,
+      width, height,
+      self->details->format_id, encoder_spec, pb_attrs, NULL,
+      gst_vtenc_enqueue_buffer, self, &session);
+  GST_INFO_OBJECT (self, "VTCompressionSessionCreate for %d x %d => %d",
+      width, height, (int) status);
+  if (status != noErr) {
+    GST_INFO_OBJECT (self, "VTCompressionSessionCreate() returned: %d",
+        (int) status);
+  }
+
   if (encoder_spec)
     CFRelease (encoder_spec);
   CFRelease (pb_attrs);
 
-  return session;
+  GST_OBJECT_LOCK (self);
+  self->session = session;
+  GST_OBJECT_UNLOCK (self);
+
+  return session ? TRUE : FALSE;
 }
 
 static void

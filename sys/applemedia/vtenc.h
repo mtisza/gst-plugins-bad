@@ -84,6 +84,12 @@ struct _GstVTEnc
 
 void gst_vtenc_register_elements (GstPlugin * plugin);
 
+/* creates a vtenc hw encode session early (pre-negotiation, so width and
+ * height must be specified) so that we can tell ahead of time if
+ * a hardware encoder is available or not
+ * returns TRUE if a hw session was successfully created */
+gboolean gst_vtenc_create_hw_session_early(GstVTEnc * self, guint width, guint height);
+
 G_END_DECLS
 
 #endif /* __GST_VTENC_H__ */
